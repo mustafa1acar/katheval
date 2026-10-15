@@ -1,0 +1,32 @@
+{
+  "name": "katheval-manpower-supply",
+  "version": "1.0.0",
+  "description": "Katheval Manpower Supply Platform (katheval.al) - Text-based CV & Passport Management System with MySQL Backend",
+  "main": "server/index.js",
+  "scripts": {
+    "server": "node server/index.js",
+    "client": "npm run dev --prefix client",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "build": "npm run build --prefix client",
+    "start": "node server/index.js",
+    "db:init": "node server/init-db.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mysql2": "^3.9.7"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "keywords": [
+    "manpower",
+    "recruitment",
+    "passport-records",
+    "cv-text",
+    "mysql"
+  ],
+  "author": "Kathilda Workforce Solutions",
+  "license": "ISC"
+}
