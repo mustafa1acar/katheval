@@ -65,12 +65,25 @@ app.get('*', (req, res) => {
 
 // Initialize Database connection & start server
 db.initDatabaseConnection().then(() => {
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`===================================================`);
-    console.log(`  Katheval Manpower Supply Backend API (katheval.al)`);
-    console.log(`  Running on: http://localhost:${PORT}`);
-    console.log(`  Database Status: ${db.getIsConnected() ? 'MySQL Connected' : 'Resilient Store Mode'}`);
-    console.log(`  No Payments | No File Uploads | Text-based CV & Passport`);
+    console.log(`  Katheval Manpower Supply Platform (katheval.al)`);
+    console.log(`  Server listening on port: ${PORT}`);
+    console.log(`  Database: ${db.getIsConnected() ? 'MySQL Connected' : 'Auto-reconnecting...'}`);
+    console.log(`  Mode: ${process.env.NODE_ENV || 'development'}`);
     console.log(`===================================================`);
   });
+
+  // Graceful shutdown for Docker / Coolify containers
+  const shutdown = (signal) => {
+    console.log(`[Server] Received ${signal}, closing HTTP server gracefully...`);
+    server.close(() => {
+      console.log('[Server] HTTP server closed.');
+      process.exit(0);
+    });
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 });
+

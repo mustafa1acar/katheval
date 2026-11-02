@@ -4,6 +4,7 @@ import Hero from './components/Hero';
 import IndustryGrid from './components/IndustryGrid';
 import StatsSection from './components/StatsSection';
 import FeaturesSection from './components/FeaturesSection';
+import JobList from './components/JobList';
 import CandidateModal from './components/CandidateModal';
 import EmployerRequestModal from './components/EmployerRequestModal';
 import AdminDashboard from './components/AdminDashboard';
@@ -88,6 +89,11 @@ export default function App() {
     setEmployerModalOpen(true);
   };
 
+  const handleApplyJob = (jobTitle) => {
+    setSelectedProfessionForApp(jobTitle);
+    setCandidateModalOpen(true);
+  };
+
   return (
     <div className="min-h-screen bg-white text-slate-900 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
 
@@ -105,13 +111,20 @@ export default function App() {
         {activeTab === 'home' && (
           <>
             <Hero
-              onOpenCandidateModal={() => setCandidateModalOpen(true)}
+              onOpenCandidateModal={() => { setSelectedProfessionForApp(''); setCandidateModalOpen(true); }}
               onOpenEmployerModal={() => setEmployerModalOpen(true)}
             />
             <StatsSection />
+            <JobList onApplyJob={handleApplyJob} />
             <IndustryGrid onSelectIndustry={handleSelectIndustry} />
             <FeaturesSection />
           </>
+        )}
+
+        {activeTab === 'jobs' && (
+          <div className="pt-2">
+            <JobList onApplyJob={handleApplyJob} />
+          </div>
         )}
 
         {activeTab === 'industries' && (

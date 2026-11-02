@@ -3,16 +3,40 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
-const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'katheval_db',
-  port: parseInt(process.env.DB_PORT || '3306', 10),
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-};
+// Parse database configuration from DATABASE_URL, MYSQL_URL or individual env vars
+function getResolvedDbConfig() {
+  const connectionUrl = process.env.DATABASE_URL || process.env.MYSQL_URL;
+  if (connectionUrl) {
+    try {
+      const url = new URL(connectionUrl);
+      return {
+        host: url.hostname || 'localhost',
+        port: parseInt(url.port || '3306', 10),
+        user: decodeURIComponent(url.username || 'root'),
+        password: decodeURIComponent(url.password || ''),
+        database: url.pathname ? url.pathname.replace(/^\//, '') : 'katheval_db',
+        waitForConnections: true,
+        connectionLimit: 10,
+        queueLimit: 0
+      };
+    } catch (e) {
+      console.warn('[Database] Could not parse DATABASE_URL/MYSQL_URL, falling back to individual env variables.');
+    }
+  }
+
+  return {
+    host: process.env.DB_HOST || process.env.MYSQL_HOST || process.env.MYSQLHOST || 'localhost',
+    user: process.env.DB_USER || process.env.MYSQL_USER || process.env.MYSQLUSER || 'root',
+    password: process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || process.env.MYSQLPASSWORD || '',
+    database: process.env.DB_NAME || process.env.MYSQL_DATABASE || process.env.MYSQLDATABASE || 'katheval_db',
+    port: parseInt(process.env.DB_PORT || process.env.MYSQL_PORT || process.env.MYSQLPORT || '3306', 10),
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+  };
+}
+
+const dbConfig = getResolvedDbConfig();
 
 // In-Memory Fallback Storage if MySQL DB is offline
 const inMemoryStore = {
@@ -167,62 +191,176 @@ const inMemoryStore = {
 
 let pool = null;
 let isConnected = false;
+let reconnectTimer = null;
 
 async function initDatabaseConnection() {
   try {
-    // Attempt connecting to MySQL server directly first (without DB name) to auto-create database if needed
-    const tempConnection = await mysql.createConnection({
-      host: dbConfig.host,
-      user: dbConfig.user,
-      password: dbConfig.password,
-      port: dbConfig.port
-    });
-
-    await tempConnection.query(`CREATE DATABASE IF NOT EXISTS \`${dbConfig.database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`);
-    await tempConnection.end();
-
-    // Now create pool with target database
+    // 1. First attempt: Direct connection to target database (ideal for Coolify and user-scoped MySQL permissions)
     pool = mysql.createPool(dbConfig);
     const connection = await pool.getConnection();
     connection.release();
     isConnected = true;
     console.log(`[Database] Successfully connected to MySQL at ${dbConfig.host}:${dbConfig.port}/${dbConfig.database}`);
 
-    // Initialize Tables automatically using schema.sql script
+    if (reconnectTimer) {
+      clearInterval(reconnectTimer);
+      reconnectTimer = null;
+    }
+
+    // Auto-migrate tables
     await autoMigrateTables();
+    return true;
   } catch (err) {
-    console.warn(`[Database Warning] Could not connect to MySQL server (${err.message}).`);
-    console.warn(`[Database Status] Switching to Resilient In-Memory Storage Mode for seamless demonstration.`);
+    // 2. If error is ER_BAD_DB_ERROR, attempt to create database if privileged
+    if (err.code === 'ER_BAD_DB_ERROR') {
+      try {
+        console.log(`[Database] Database '${dbConfig.database}' does not exist. Attempting creation...`);
+        const tempConn = await mysql.createConnection({
+          host: dbConfig.host,
+          user: dbConfig.user,
+          password: dbConfig.password,
+          port: dbConfig.port
+        });
+        await tempConn.query(`CREATE DATABASE IF NOT EXISTS \`${dbConfig.database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`);
+        await tempConn.end();
+
+        pool = mysql.createPool(dbConfig);
+        const connection = await pool.getConnection();
+        connection.release();
+        isConnected = true;
+        console.log(`[Database] Database created and connected successfully.`);
+        await autoMigrateTables();
+        return true;
+      } catch (createErr) {
+        console.warn(`[Database Warning] Could not auto-create database: ${createErr.message}`);
+      }
+    }
+
+    console.warn(`[Database Warning] MySQL connection failed (${err.message}).`);
+    console.warn(`[Database Status] Operating in Resilient Storage Mode until MySQL becomes available.`);
     isConnected = false;
+
+    // Schedule background reconnection attempts (essential for Docker / Coolify startup sequence)
+    if (!reconnectTimer) {
+      reconnectTimer = setInterval(async () => {
+        try {
+          console.log('[Database] Retrying connection to MySQL server...');
+          const ok = await initDatabaseConnection();
+          if (ok) {
+            console.log('[Database] Reconnected to MySQL successfully!');
+          }
+        } catch (_) {}
+      }, 7000);
+    }
+    return false;
   }
 }
 
 async function autoMigrateTables() {
   if (!pool || !isConnected) return;
-  try {
-    const schemaPath = path.join(__dirname, 'schema.sql');
-    if (fs.existsSync(schemaPath)) {
-      const sqlContent = fs.readFileSync(schemaPath, 'utf8');
-      const statements = sqlContent
-        .split(';')
-        .map(s => s.trim())
-        .filter(s => s.length > 0 && !s.startsWith('--') && !s.toLowerCase().startsWith('create database') && !s.toLowerCase().startsWith('use '));
 
-      for (const statement of statements) {
-        try {
-          await pool.query(statement);
-        } catch (e) {
-          // Ignore duplicate insert errors on seed data
+  try {
+    // Check candidate table schema guaranteed inline DDL
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS candidates (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        candidate_code VARCHAR(50) NOT NULL UNIQUE,
+        full_name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) NOT NULL,
+        phone VARCHAR(50) NOT NULL,
+        profession VARCHAR(150) NOT NULL,
+        experience_years INT DEFAULT 0,
+        desired_country VARCHAR(100) DEFAULT 'Any',
+        education_level VARCHAR(100),
+        status VARCHAR(50) DEFAULT 'Pending Review',
+        passport_number VARCHAR(100) NOT NULL,
+        passport_full_name VARCHAR(255) NOT NULL,
+        passport_nationality VARCHAR(100) NOT NULL,
+        passport_dob DATE NULL,
+        passport_issue_date DATE NULL,
+        passport_expiry_date DATE NULL,
+        passport_place_of_issue VARCHAR(150),
+        passport_additional_notes TEXT,
+        cv_summary TEXT,
+        cv_work_experience LONGTEXT,
+        cv_education_details LONGTEXT,
+        cv_skills_list TEXT,
+        cv_certifications TEXT,
+        cv_languages VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS employer_requests (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        request_code VARCHAR(50) NOT NULL UNIQUE,
+        company_name VARCHAR(255) NOT NULL,
+        contact_person VARCHAR(255) NOT NULL,
+        email VARCHAR(255) NOT NULL,
+        phone VARCHAR(50) NOT NULL,
+        industry VARCHAR(100) NOT NULL,
+        required_profession VARCHAR(150) NOT NULL,
+        workers_count INT DEFAULT 1,
+        work_location VARCHAR(150),
+        duration VARCHAR(100),
+        salary_offered VARCHAR(100),
+        requirements_description TEXT,
+        status VARCHAR(50) DEFAULT 'New Request',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS jobs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        title VARCHAR(255) NOT NULL,
+        category VARCHAR(100) NOT NULL,
+        location VARCHAR(150) NOT NULL,
+        vacancies INT DEFAULT 1,
+        salary_range VARCHAR(100),
+        contract_period VARCHAR(100),
+        description TEXT,
+        requirements TEXT,
+        benefits TEXT,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // Also execute external schema.sql if exists (for seeds, etc.)
+    const schemaCandidatePaths = [
+      path.join(__dirname, 'schema.sql'),
+      path.join(__dirname, '..', 'schema.sql')
+    ];
+
+    for (const schemaPath of schemaCandidatePaths) {
+      if (fs.existsSync(schemaPath)) {
+        const sqlContent = fs.readFileSync(schemaPath, 'utf8');
+        const statements = sqlContent
+          .split(';')
+          .map(s => s.trim())
+          .filter(s => s.length > 0 && !s.startsWith('--') && !s.toLowerCase().startsWith('create database') && !s.toLowerCase().startsWith('use '));
+
+        for (const statement of statements) {
+          try {
+            await pool.query(statement);
+          } catch (_) {
+            // Ignore duplicate entries on seeds
+          }
         }
+        break;
       }
-      console.log('[Database] MySQL tables verified and auto-migrated successfully.');
     }
+
+    console.log('[Database] MySQL tables (candidates, employer_requests, jobs) verified and ready.');
   } catch (err) {
     console.error('[Database Migration Error]', err.message);
   }
 }
 
-// Database helper functions supporting both MySQL and In-Memory fallback seamlessly
+// Database query helper
 async function query(sql, params = []) {
   if (isConnected && pool) {
     try {
@@ -243,3 +381,4 @@ module.exports = {
   getDbConfig: () => ({ ...dbConfig, password: '***' }),
   inMemoryStore
 };
+

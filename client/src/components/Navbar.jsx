@@ -13,6 +13,7 @@ export default function Navbar({ onOpenCandidateModal, onOpenEmployerModal, acti
 
   const navLinks = [
     { id: 'home',       label: 'Home' },
+    { id: 'jobs',       label: 'Job Openings' },
     { id: 'industries', label: 'Labor Sectors' },
     { id: 'about',      label: 'About' },
   ];

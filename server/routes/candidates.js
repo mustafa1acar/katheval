@@ -45,6 +45,18 @@ router.post('/', async (req, res) => {
       });
     }
 
+    // Helper to sanitize dates for MySQL DATE column
+    const sanitizeDate = (val) => {
+      if (!val || typeof val !== 'string' || !val.trim()) return null;
+      const trimmed = val.trim();
+      return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : null;
+    };
+
+    const cleanDob = sanitizeDate(passport_dob);
+    const cleanIssueDate = sanitizeDate(passport_issue_date);
+    const cleanExpiryDate = sanitizeDate(passport_expiry_date);
+    const cleanExpYears = parseInt(experience_years || 0, 10) || 0;
+
     const candidate_code = generateCandidateCode();
     const isConnected = db.getIsConnected();
 
@@ -60,14 +72,31 @@ router.post('/', async (req, res) => {
       `;
 
       const result = await db.query(sql, [
-        candidate_code, full_name, email, phone, profession, experience_years || 0,
-        desired_country || 'Any', education_level || 'General',
-        passport_number, passport_full_name || full_name, passport_nationality,
-        passport_dob || null, passport_issue_date || null, passport_expiry_date || null,
-        passport_place_of_issue || '', passport_additional_notes || '',
-        cv_summary || '', cv_work_experience || '', cv_education_details || '',
-        cv_skills_list || '', cv_certifications || '', cv_languages || ''
+        candidate_code,
+        (full_name || '').trim(),
+        (email || '').trim(),
+        (phone || '').trim(),
+        (profession || '').trim(),
+        cleanExpYears,
+        (desired_country || 'Any').trim(),
+        (education_level || 'General').trim(),
+        (passport_number || '').trim(),
+        (passport_full_name || full_name || '').trim(),
+        (passport_nationality || '').trim(),
+        cleanDob,
+        cleanIssueDate,
+        cleanExpiryDate,
+        (passport_place_of_issue || '').trim(),
+        (passport_additional_notes || '').trim(),
+        (cv_summary || '').trim(),
+        (cv_work_experience || '').trim(),
+        (cv_education_details || '').trim(),
+        (cv_skills_list || '').trim(),
+        (cv_certifications || '').trim(),
+        (cv_languages || '').trim()
       ]);
+
+      console.log(`[Candidate Application] Successfully recorded job applicant to MySQL: ${candidate_code} (${full_name} - ${profession}, DB ID: ${result.insertId})`);
 
       return res.status(201).json({
         success: true,
@@ -77,32 +106,33 @@ router.post('/', async (req, res) => {
         storage: 'MySQL Database'
       });
     } else {
-      // In-memory fallback
+      // In-memory fallback if MySQL temporarily disconnected
+      console.warn(`[Candidate Application] Stored candidate ${candidate_code} in Resilient Memory Store (MySQL is reconnecting...)`);
       const newCandidate = {
         id: db.inMemoryStore.candidates.length + 1,
         candidate_code,
-        full_name,
-        email,
-        phone,
-        profession,
-        experience_years: parseInt(experience_years || 0, 10),
+        full_name: (full_name || '').trim(),
+        email: (email || '').trim(),
+        phone: (phone || '').trim(),
+        profession: (profession || '').trim(),
+        experience_years: cleanExpYears,
         desired_country: desired_country || 'Any',
         education_level: education_level || 'General',
         status: 'Pending Review',
-        passport_number,
-        passport_full_name: passport_full_name || full_name,
-        passport_nationality,
-        passport_dob,
-        passport_issue_date,
-        passport_expiry_date,
-        passport_place_of_issue,
-        passport_additional_notes,
-        cv_summary,
-        cv_work_experience,
-        cv_education_details,
-        cv_skills_list,
-        cv_certifications,
-        cv_languages,
+        passport_number: (passport_number || '').trim(),
+        passport_full_name: (passport_full_name || full_name || '').trim(),
+        passport_nationality: (passport_nationality || '').trim(),
+        passport_dob: cleanDob,
+        passport_issue_date: cleanIssueDate,
+        passport_expiry_date: cleanExpiryDate,
+        passport_place_of_issue: passport_place_of_issue || '',
+        passport_additional_notes: passport_additional_notes || '',
+        cv_summary: cv_summary || '',
+        cv_work_experience: cv_work_experience || '',
+        cv_education_details: cv_education_details || '',
+        cv_skills_list: cv_skills_list || '',
+        cv_certifications: cv_certifications || '',
+        cv_languages: cv_languages || '',
         created_at: new Date().toISOString()
       };
       db.inMemoryStore.candidates.unshift(newCandidate);
@@ -116,7 +146,7 @@ router.post('/', async (req, res) => {
       });
     }
   } catch (err) {
-    console.error('[Error saving candidate]', err);
+    console.error('[Error saving candidate to MySQL]', err);
     return res.status(500).json({ success: false, message: 'Server error saving candidate: ' + err.message });
   }
 });
