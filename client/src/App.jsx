@@ -11,7 +11,7 @@ import AdminDashboard from './components/AdminDashboard';
 import Footer from './components/Footer';
 
 // WhatsApp phone number (international format, no + or spaces)
-const WHATSAPP_NUMBER = '919733621111';
+const WHATSAPP_NUMBER = '355698834840';
 const WHATSAPP_MESSAGE = 'Hello! I am interested in Katheval manpower services.';
 
 function WhatsAppButton() {
