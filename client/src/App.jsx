@@ -12,7 +12,7 @@ import Footer from './components/Footer';
 
 // WhatsApp phone number (international format, no + or spaces)
 const WHATSAPP_NUMBER = '355698834840';
-const WHATSAPP_MESSAGE = 'Hello! I am interested in Katheval manpower services.';
+const WHATSAPP_MESSAGE = 'Hello! I am interested in Katheval services.';
 
 function WhatsAppButton() {
   const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(WHATSAPP_MESSAGE)}`;
